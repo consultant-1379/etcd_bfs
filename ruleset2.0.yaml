@@ -1,0 +1,51 @@
+modelVersion: 2.0
+
+docker-images:
+  - adp-release-auto: armdocker.rnd.ericsson.se/sandbox/adp-staging/adp-cicd/bob-adp-release-auto:latest
+
+properties:
+  # Properties for Binary Upload
+  - etcd-version: '3.4.16'
+  - binary-file: "etcd-${etcd-version}-bin.tar.gz"
+  - binary-file-path: "Docker/target/"
+  - binary-file-repo: "https://arm.sero.gic.ericsson.se/artifactory/proj-adp-eric-dist-coordinator-ed-binary-generic-local/${etcd-version}"
+
+env:
+  - API_TOKEN
+  - SELI_API_TOKEN
+
+rules:
+  # Make sure repo is clean
+  clean:
+    - task: rm
+      cmd:
+        - rm -rf .bob/
+        - rm -rf build/
+        - docker image prune -a -f --filter "until=12h"
+    - task: mvn-clean-auth
+      cmd:
+        - mvn clean -f Docker/authProvider/pom.xml
+    - task: mvn-clean-metrics
+      cmd:
+        - mvn clean -f Docker/metricsProvider/pom.xml
+  # Build jar files
+  deploy:
+    - task: mvn-deploy-authProvider
+      cmd:
+       - mvn deploy -f Docker/authProvider/pom.xml > .bob/authProvider-deploy.log
+    - task: mvn-deploy-metricsProvider
+      cmd:
+       - mvn deploy -f Docker/metricsProvider/pom.xml > .bob/metricsProvider-deploy.log
+  # Maven Build
+  mvn:
+    - task: package
+      docker-image: java11-mvn-builder
+      docker-flags:
+        - -v /home/lciadm100/.m2/repository/:/tmp/.m2/repository/
+        - -v /home/lciadm100/.m2/settings.xml:/tmp/.m2/settings.xml
+      cmd: mvn -f pom.xml -gs /tmp/.m2/settings.xml -Dmaven.repo.local=/tmp/.m2/repository/ -Dcheckstyle.skip -Dpmd.skip -DskipTests package
+  # Upload Zookeeper Binary
+  upload-etcd-binary:
+    - task: upload-etcd-binary
+      docker-image: adp-release-auto
+      cmd: curl -H 'X-JFrog-Art-Api:${env.API_TOKEN}' -T "${binary-file-path}/${binary-file}" "${binary-file-repo}/${binary-file}"
